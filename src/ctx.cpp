@@ -1168,7 +1168,10 @@ llvm::Value *FunctionEmitContext::None(llvm::Value *mask) {
 
 llvm::Value *FunctionEmitContext::LaneMask(llvm::Value *v) {
     const char *__movmsk = "__movmsk";
-
+    //     if (g->target->getArch() == Arch::wasm32) {
+    //         llvm::Function *fmm = m->module->getFunction("__movmsk128");
+    //         return CallInst(fmm, NULL, v, LLVMGetName(v, "_movmsk"));
+    //     }
     // Call the target-dependent movmsk function to turn the vector mask
     // into an i64 value
     std::vector<Symbol *> mm;
@@ -1194,6 +1197,15 @@ llvm::Value *FunctionEmitContext::MasksAllEqual(llvm::Value *v1, llvm::Value *v2
     // And see if it's all on
     return All(cmp);
 #else
+    if (g->target->getArch() == Arch::wasm32) {
+        llvm::Value *mm1 = llvm::BitCastInst::Create(llvm::Instruction::CastOps::BitCast, v1,
+                                                     llvm::Type::getInt128Ty(m->module->getContext()),
+                                                     LLVMGetName(v1, "i128"), bblock);
+        llvm::Value *mm2 = llvm::BitCastInst::Create(llvm::Instruction::CastOps::BitCast, v2,
+                                                     llvm::Type::getInt128Ty(m->module->getContext()),
+                                                     LLVMGetName(v2, "i128"), bblock);
+        return CmpInst(llvm::Instruction::ICmp, llvm::CmpInst::ICMP_EQ, mm1, mm2, LLVMGetName("equal", v1, v2));
+    }
     llvm::Value *mm1 = LaneMask(v1);
     llvm::Value *mm2 = LaneMask(v2);
     return CmpInst(llvm::Instruction::ICmp, llvm::CmpInst::ICMP_EQ, mm1, mm2, LLVMGetName("equal", v1, v2));

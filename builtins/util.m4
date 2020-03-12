@@ -6365,7 +6365,7 @@ exclusive_scan(WIDTH, i64, 64, or, 0, or_i64)
 ;;       with an i32 value that represents the current lane number
 
 ; num lanes, mask, code block to do per lane
-define(`per_lane', `
+define(`default_per_lane', `
   br label %pl_entry
 
 pl_entry:
@@ -6422,6 +6422,11 @@ pl_loopend:
 pl_done:
 ')
 
+ifelse(HAS_CUSTOM_PER_LANE, `1',`
+define(`per_lane', `custom_per_lane(`$1', `$2', `$3')')
+',`
+define(`per_lane', `default_per_lane(`$1', `$2', `$3')')
+')
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; gather
 ;;
