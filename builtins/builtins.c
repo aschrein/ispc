@@ -77,6 +77,14 @@
 
 #else
 #define __do_print __wasm_do_print
+#include <stdint.h>
+#include <time.h>
+int64_t __wasm_clock() {
+    // clockid_t clocks[] = { CLOCK_REALTIME, CLOCK_MONOTONIC };
+    // struct timespec ts;
+    // clock_gettime(clocks[1], &ts);
+    return clock();
+}
 #endif // !WASM_IMPLEMENTATION
 #include <stdarg.h>
 #include <stdint.h>

@@ -4,8 +4,10 @@ export uniform int width() { return programCount; }
 
 export void f_f(uniform float RET[], uniform float aFOO[]) {
   unsigned uniform int64 a = clock();
+  print("%\n", a);
   float x = pow(sqrt(aFOO[programIndex]), 5.5);
   unsigned uniform int64 b = clock();
+  print("%\n", b);
   RET[programIndex] = (b - a) > 0 ? 1 : 0;
 }
 
