@@ -50,6 +50,10 @@
 #include <malloc.h>
 #endif // ISPC_IS_LINUX
 
+#ifdef WASM
+#include <malloc.h>
+#endif // WASM
+
 // Currently tile widths must be a multiple of SIMD width (i.e. 8 for ispc sse4x2)!
 #define MIN_TILE_WIDTH 16
 #define MIN_TILE_HEIGHT 16
@@ -72,6 +76,9 @@ static void *lAlignedMalloc(size_t size, int32_t alignment) {
     ((void **)amem)[-1] = mem;
     return amem;
 #endif
+#ifdef WASM
+    return memalign(alignment, size);
+#endif // WASM
 }
 
 static void lAlignedFree(void *ptr) {
@@ -84,6 +91,9 @@ static void lAlignedFree(void *ptr) {
 #ifdef ISPC_IS_APPLE
     free(((void **)ptr)[-1]);
 #endif
+#ifdef WASM
+    free(ptr);
+#endif // WASM
 }
 
 static void ComputeZBounds(int tileStartX, int tileEndX, int tileStartY, int tileEndY,

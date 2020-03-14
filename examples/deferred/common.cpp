@@ -58,6 +58,9 @@
 #ifdef ISPC_IS_LINUX
 #include <malloc.h>
 #endif
+#ifdef WASM
+#include <malloc.h>
+#endif
 #include "../timing.h"
 #include "deferred.h"
 
@@ -77,6 +80,9 @@ static void *lAlignedMalloc(size_t size, int32_t alignment) {
     ((void **)amem)[-1] = mem;
     return amem;
 #endif
+#ifdef WASM
+    return memalign(alignment, size);
+#endif
 }
 
 static void lAlignedFree(void *ptr) {
@@ -88,6 +94,9 @@ static void lAlignedFree(void *ptr) {
 #endif
 #ifdef ISPC_IS_APPLE
     free(((void **)ptr)[-1]);
+#endif
+#ifdef WASM
+    free(ptr);
 #endif
 }
 
@@ -173,7 +182,7 @@ void WriteFrame(const char *filename, const InputData *input, const Framebuffer 
 
     // Write out simple PPM file
     FILE *out = fopen(filename, "wb");
-    fprintf(out, "P6 %d %d 255\n", input->header.framebufferWidth, input->header.framebufferHeight);
+    fprintf(out, "P6\n%d %d\n255\n", input->header.framebufferWidth, input->header.framebufferHeight);
     fwrite(framebufferAOS, imageBytes, 1, out);
     fclose(out);
 
