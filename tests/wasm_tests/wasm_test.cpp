@@ -149,6 +149,6 @@ int main(int argc, char *argv[]) {
         }
     }
     if (errors == 0)
-      printf("SUCCESS\n");
+      printf("[[[SUCCESS]]]\n");
     return errors > 0;
 }

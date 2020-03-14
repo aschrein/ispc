@@ -928,6 +928,12 @@ int main(int Argc, char *Argv[]) {
         llvm::cl::ParseCommandLineOptions(2, Args.data());
     }
 
+    if (g->debugPrint)
+    {
+        char const *print_after_all[] = {"ispc (LLVM option parsing)", "-print-after-all", nullptr};
+        llvm::cl::ParseCommandLineOptions(2, print_after_all);
+    }
+    
     for (auto target : targets) {
         if (target == ISPCTarget::wasm_i32x4) {
             Assert(targets.size() == 1 && "wasm32 supports only one target: i32x4");

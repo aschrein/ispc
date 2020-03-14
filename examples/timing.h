@@ -66,7 +66,18 @@ static inline double rtc(void) {
     return etime;
 }
 
-#else // __arm__ || __aarch64__
+#elif defined(WASM) // __arm__ || __aarch64__
+#include <sys/time.h>
+#include <time.h>
+
+static inline double rtc(void) {
+    return ((double)clock()) * 1.0e3;
+}
+
+__inline__ uint64_t rdtsc() {
+    return (uint64_t)(clock() * 1.0e6);
+}
+#else // WASM
 
 #ifdef WIN32
 #include <windows.h>

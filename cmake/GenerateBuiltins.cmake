@@ -73,9 +73,16 @@ function(ll_to_cpp llFileName bit os_name resultFileName)
                 -DLLVM_VERSION=${LLVM_VERSION} -DBUILD_OS=${os_name_macro} -DRUNTIME=${bit} ${inputFilePath}
                 | \"${Python3_EXECUTABLE}\" bitcode2cpp.py ${inputFilePath} --type=${type} --runtime=${bit} --os=${os_name_macro} --llvm_as ${LLVM_AS_EXECUTABLE}
                 > ${output}
-            DEPENDS ${inputFilePath} bitcode2cpp.py
+            DEPENDS ${inputFilePath} bitcode2cpp.py #${llFileName}-${bit}bit-${os_name}_PHONY322
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         )
+        # add_custom_command(
+        #     OUTPUT ${llFileName}-${bit}bit-${os_name}_PHONY322
+        #     COMMAND ${M4_EXECUTABLE} -I${includePath}
+        #         -DLLVM_VERSION=${LLVM_VERSION} -DBUILD_OS=${os_name_macro} -DRUNTIME=${bit} ${inputFilePath} > build/tmp/${llFileName}-${bit}bit-${os_name}.ll
+        #     DEPENDS ${inputFilePath} bitcode2cpp.py
+        #     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        # )
     endif()
     set(${resultFileName} ${output} PARENT_SCOPE)
     set_source_files_properties(${resultFileName} PROPERTIES GENERATED true)

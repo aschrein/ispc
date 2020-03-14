@@ -36,8 +36,8 @@ define(`WIDTH',`4')
 define(`BUILD_OS',`UNIX')
 define(`RUNTIME',`32')
 define(`MASK',`i32')
-define(`HAS_CUSTOM_PER_LANE',`1')
 define(`HAS_CUSTOM_CLOCK',`1')
+define(`HAS_CUSTOM_PER_LANE',`1')
 
 define(`custom_per_lane',`
   br label %pl_entry

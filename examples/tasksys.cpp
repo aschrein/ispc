@@ -118,12 +118,60 @@ using namespace Concurrency;
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
-#include <semaphore.h>
 #include <sys/param.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 #include <vector>
+#ifndef WASM
+  #include <semaphore.h>
+#else
+// SRC: https://github.com/kig/webcompute/blob/master/ispc/build/tasksys.cpp#L140
+typedef struct {
+	int val;
+	pthread_mutex_t mutex;
+	pthread_cond_t cond;
+} sem_t;
+
+#define SEM_FAILED NULL
+
+int sem_wait(sem_t *s)
+{
+	pthread_mutex_lock(&(s->mutex));
+	while (s->val == 0) {
+		pthread_cond_wait(&(s->cond), &(s->mutex));
+	}
+	s->val--;
+	pthread_mutex_unlock(&(s->mutex));
+	return 0;
+}
+
+int sem_post(sem_t *s)
+{
+	pthread_mutex_lock(&(s->mutex));
+	s->val++;
+	pthread_cond_broadcast(&(s->cond));
+	pthread_mutex_unlock(&(s->mutex));
+	return 0;
+}
+
+sem_t *sem_open(const char *name, int oflag, mode_t mode, unsigned int value)
+{
+	sem_t *s = (sem_t*)malloc(sizeof(sem_t));
+	if (s != NULL) {
+		s->val = 0;
+        pthread_mutex_init(&(s->mutex), NULL);
+        pthread_cond_init(&(s->cond), NULL);
+	}
+	return s;
+}
+
+int sem_close(sem_t *s) {
+	free(s);
+	return 0;
+}
+																
+#endif
 #endif // ISPC_USE_PTHREADS
 #ifdef ISPC_USE_PTHREADS_FULLY_SUBSCRIBED
 #include <algorithm>

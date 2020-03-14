@@ -34,15 +34,20 @@ for file in filelist:
     if match < 0:
       raise "match < 0"
     cmds = [
-      'cp ' + fullpath + ' wasm_test.ispc',
+      'mkdir -p tmp_folder',
+      'cp ' + fullpath + ' tmp_folder/wasm_test.ispc',
       'make TEST_SIG={}'.format(match),
       # 'bin/ispc ' + fullpath + '--target=wasm-i32x4 --emit-llvm-text -o dummy.ll',
     ];
     for cmd in cmds:
       # process = subprocess.Popen(['bin/ispc', fullpath, '--target=wasm-i32x4', '--emit-llvm-text', '-o', 'dummy.ll'])
-      process = subprocess.Popen(cmd.split(' '))
+      process = subprocess.Popen(cmd.split(' '), stdout=subprocess.PIPE)
       stdout, stderr = process.communicate()
-      
+      stdout = stdout.decode()
+      print(stdout)
+      if stdout != None and stdout != '' and not "[[[SUCCESS]]]" in stdout:
+        print("Couldn't find [[[SUCCESS]]]")
+        exit(-1)
       if process.returncode != 0:
         exit(-1)
     
