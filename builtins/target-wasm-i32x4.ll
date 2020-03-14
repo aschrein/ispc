@@ -29,14 +29,27 @@
 ;;   NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 ;;   SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-;; Define i1x4 mask
+;; Authors:
+;; Anton Schreiner
+
+;; TODO
+;; * Implement actual *fast* functions to be faster than default
+;; * Analize code to find uses for wasm specific intrinsics(@llvm.wasm.anytrue.v4i32 etc)
 
 define(`WIDTH',`4')
 ;; FIXME: Workaround for "BUILD_OS should be defined to either UNIX or WINDOWS" error
 define(`BUILD_OS',`UNIX')
 define(`RUNTIME',`32')
 define(`MASK',`i32')
+;; Wasm has custom clock function
 define(`HAS_CUSTOM_CLOCK',`1')
+
+;; Wasm target currently has some issues on backend code generation
+;; It's unable to recognize movmsk patterns which results in poor codegen
+;; To mitigate that here is an overloading that does i128 comparisons
+;; that avoids expensive 'trunc <4 x i32> to <4 x i1>' instructions
+define(`ENABLE_CUSTOM_PER_LANE', `1')
+ifelse(ENABLE_CUSTOM_PER_LANE, `1', `
 define(`HAS_CUSTOM_PER_LANE',`1')
 
 define(`custom_per_lane',`
@@ -85,6 +98,7 @@ pl_loopend:
 
 pl_done:
 ')
+', `')
 
 include(`util.m4')
 
@@ -103,6 +117,29 @@ define_avgs()
 saturation_arithmetic()
 
 declare i64 @__wasm_clock()
+declare <4 x double> @llvm.sqrt.v4f64(<4 x double>)
+declare float @__half_to_float_uniform(i16 %v) nounwind readnone
+declare <WIDTH x float> @__half_to_float_varying(<WIDTH x i16> %v) nounwind readnone
+declare i16 @__float_to_half_uniform(float %v) nounwind readnone
+declare <WIDTH x i16> @__float_to_half_varying(<WIDTH x float> %v) nounwind readnone
+declare i32 @llvm.wasm.anytrue.v4i32(<4 x i32>)
+declare i32 @llvm.wasm.alltrue.v4i32(<4 x i32>)
+declare <4 x float> @llvm.sqrt.v4f32(<4 x float>)
+declare double    @llvm.sqrt.f64(double %Val)
+declare float     @llvm.sin.f32(float %Val)
+declare float     @llvm.asin.f32(float %Val)
+declare float     @llvm.cos.f32(float %Val)
+declare float     @llvm.sqrt.f32(float %Val)
+declare float     @llvm.exp.f32(float %Val)
+declare float     @llvm.log.f32(float %Val)
+declare float     @llvm.pow.f32(float %f, float %e)
+declare <4 x float> @llvm.maximum.v4f32(<4 x float>, <4 x float>)
+declare <4 x float> @llvm.minimum.v4f32(<4 x float>, <4 x float>)
+declare <2 x double> @llvm.maximum.v2f64(<2 x double>, <2 x double>)
+declare <2 x double> @llvm.minimum.v2f64(<2 x double>, <2 x double>)
+declare double @round(double)
+declare double @floor(double)
+declare double @ceil(double)
 
 define i64 @__clock() nounwind {
   %r = call i64 @__wasm_clock()
@@ -113,18 +150,25 @@ define void @__fastmath() {
 entry:
   ret void
 }
-declare  double @__rsqrt_uniform_double(double)
-declare <WIDTH x double> @__rsqrt_varying_double(<WIDTH x double>)
 
-declare <4 x double> @llvm.sqrt.v4f64(<4 x double>)
+define <4 x double> @__rsqrt_varying_double(<4 x double> %v) nounwind readnone alwaysinline {
+entry:
+  %0 = tail call <4 x double> @llvm.sqrt.v4f64(<4 x double> %v)
+  %mul.i16 = fdiv <4 x double> <double 1.000000e+00, double 1.000000e+00, double 1.000000e+00, double 1.000000e+00>, %0
+  ret <4 x double> %mul.i16
+}
+
+define <4 x double> @__rsqrt_fast_varying_double(<4 x double> %v) nounwind readnone alwaysinline {
+entry:
+  %0 = tail call <4 x double> @llvm.sqrt.v4f64(<4 x double> %v)
+  %mul.i16 = fdiv <4 x double> <double 1.000000e+00, double 1.000000e+00, double 1.000000e+00, double 1.000000e+00>, %0
+  ret <4 x double> %mul.i16
+}
+
 define <WIDTH x double> @__sqrt_varying_double(<WIDTH x double>) nounwind readnone alwaysinline {
   %r = call <4 x double> @llvm.sqrt.v4f64(<4 x double> %0)
   ret <WIDTH x double> %r
 }
-declare float @__half_to_float_uniform(i16 %v) nounwind readnone
-declare <WIDTH x float> @__half_to_float_varying(<WIDTH x i16> %v) nounwind readnone
-declare i16 @__float_to_half_uniform(float %v) nounwind readnone
-declare <WIDTH x i16> @__float_to_half_varying(<WIDTH x float> %v) nounwind readnone
 
 define void @__masked_store_blend_i8(<WIDTH x i8>* nocapture %ptr, <WIDTH x i8> %new,
                                      <WIDTH x MASK> %mask) nounwind alwaysinline {
@@ -176,11 +220,6 @@ define i128 @__movmsk128(<WIDTH x MASK> %mask) nounwind readnone alwaysinline {
 
 define i1 @__any(<4 x MASK> %mask) nounwind readnone alwaysinline {
   entry:
-    ; %mask1 = trunc <WIDTH x MASK> %mask to <WIDTH x i1>
-    ; %mask_i4 = bitcast <WIDTH x i1> %mask1 to i4
-    ; %cmp = icmp ne i4 %mask_i4, 0
-    ; ret i1 %cmp
-    ; %any_true = call i32 @llvm.wasm.anytrue.v4i32(<4 x i32> %mask)
     %any_true = bitcast <WIDTH x MASK> %mask to i128
     %cmp = icmp ne i128 %any_true, 0
     ret i1 %cmp
@@ -188,44 +227,38 @@ define i1 @__any(<4 x MASK> %mask) nounwind readnone alwaysinline {
 
 define i1 @__all(<WIDTH x MASK> %mask) nounwind readnone alwaysinline {
   entry:
-    ; %mask1 = trunc <WIDTH x MASK> %mask to <WIDTH x i1>
-    ; %mask_i4 = bitcast <WIDTH x i1> %mask1 to i4
-    ; %cmp = icmp eq i4 %mask_i4, 15
-    ; ret i1 %cmp
-    ; %all_true = call i32 @llvm.wasm.alltrue.v4i32(<4 x i32> %mask)
     %all_true = bitcast <WIDTH x MASK> %mask to i128
     %cmp = icmp eq i128 %all_true, -1
     ret i1 %cmp
 }
-
-declare i32 @llvm.wasm.anytrue.v4i32(<4 x i32>)
-declare i32 @llvm.wasm.alltrue.v4i32(<4 x i32>)
 
 define i1 @__none(<WIDTH x MASK> %mask) nounwind readnone alwaysinline {
   %any = call i1 @__any(<WIDTH x MASK> %mask)
   %none = icmp eq i1 %any, 0
   ret i1 %none
 }
-; Function Attrs: nounwind readnone
+
 define <4 x float> @__rsqrt_varying_float(<4 x float> %v) nounwind readnone alwaysinline {
 entry:
   %0 = tail call <4 x float> @llvm.sqrt.v4f32(<4 x float> %v)
-  %mul.i = fmul <4 x float> %0, %v
-  %mul.i18 = fmul <4 x float> %0, %mul.i
-  %sub.i = fsub <4 x float> <float 3.000000e+00, float 3.000000e+00, float 3.000000e+00, float 3.000000e+00>, %mul.i18
-  %mul.i17 = fmul <4 x float> %0, %sub.i
-  %mul.i16 = fmul <4 x float> %mul.i17, <float 5.000000e-01, float 5.000000e-01, float 5.000000e-01, float 5.000000e-01>
+  %mul.i16 = fdiv <4 x float> <float 1.000000e+00, float 1.000000e+00, float 1.000000e+00, float 1.000000e+00>, %0
+  ; %mul.i = fmul <4 x float> %0, %v
+  ; %mul.i18 = fmul <4 x float> %0, %mul.i
+  ; %sub.i = fsub <4 x float> <float 3.000000e+00, float 3.000000e+00, float 3.000000e+00, float 3.000000e+00>, %mul.i18
+  ; %mul.i17 = fmul <4 x float> %0, %sub.i
+  ; %mul.i16 = fmul <4 x float> %mul.i17, <float 5.000000e-01, float 5.000000e-01, float 5.000000e-01, float 5.000000e-01>
   ret <4 x float> %mul.i16
 }
 
 define <4 x float> @__rsqrt_fast_varying_float(<4 x float> %v) nounwind readnone alwaysinline {
 entry:
   %0 = tail call <4 x float> @llvm.sqrt.v4f32(<4 x float> %v)
-  %mul.i = fmul <4 x float> %0, %v
-  %mul.i18 = fmul <4 x float> %0, %mul.i
-  %sub.i = fsub <4 x float> <float 3.000000e+00, float 3.000000e+00, float 3.000000e+00, float 3.000000e+00>, %mul.i18
-  %mul.i17 = fmul <4 x float> %0, %sub.i
-  %mul.i16 = fmul <4 x float> %mul.i17, <float 5.000000e-01, float 5.000000e-01, float 5.000000e-01, float 5.000000e-01>
+  %mul.i16 = fdiv <4 x float> <float 1.000000e+00, float 1.000000e+00, float 1.000000e+00, float 1.000000e+00>, %0
+  ; %mul.i = fmul <4 x float> %0, %v
+  ; %mul.i18 = fmul <4 x float> %0, %mul.i
+  ; %sub.i = fsub <4 x float> <float 3.000000e+00, float 3.000000e+00, float 3.000000e+00, float 3.000000e+00>, %mul.i18
+  ; %mul.i17 = fmul <4 x float> %0, %sub.i
+  ; %mul.i16 = fmul <4 x float> %mul.i17, <float 5.000000e-01, float 5.000000e-01, float 5.000000e-01, float 5.000000e-01>
   ret <4 x float> %mul.i16
 }
 
@@ -234,38 +267,6 @@ entry:
   %0 = tail call <4 x float> @llvm.sqrt.v4f32(<4 x float> %v)
   ret <4 x float> %0
 }
-; Function Attrs: nounwind readnone speculatable willreturn
-declare <4 x float> @llvm.sqrt.v4f32(<4 x float>)
-;declare float     @llvm.sqrt.f32(float %Val)
-declare double    @llvm.sqrt.f64(double %Val)
-declare float     @llvm.sin.f32(float %Val)
-declare float     @llvm.asin.f32(float %Val)
-declare float     @llvm.cos.f32(float %Val)
-declare float     @llvm.sqrt.f32(float %Val)
-declare float     @llvm.exp.f32(float %Val)
-declare float     @llvm.log.f32(float %Val)
-declare float     @llvm.pow.f32(float %f, float %e)
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; rounding
-;;
-;; There are not any rounding instructions in SSE2, so we have to emulate
-;; the functionality with multiple instructions...
-
-; The code for __round_* is the result of compiling the following source
-; code.
-;
-; export float Round(float x) {
-;    unsigned int sign = signbits(x);
-;    unsigned int ix = intbits(x);
-;    ix ^= sign;
-;    x = floatbits(ix);
-;    x += 0x1.0p23f;
-;    x -= 0x1.0p23f;
-;    ix = intbits(x);
-;    ix ^= sign;
-;    x = floatbits(ix);
-;    return x;
-;}
 
 define float @__round_uniform_float(float) nounwind readonly alwaysinline {
   %float_to_int_bitcast.i.i.i.i = bitcast float %0 to i32
@@ -280,19 +281,6 @@ define float @__round_uniform_float(float) nounwind readonly alwaysinline {
   ret float %int_to_float_bitcast.i.i.i
 }
 
-;; Similarly, for implementations of the __floor* functions below, we have the
-;; bitcode from compiling the following source code...
-
-;export float Floor(float x) {
-;    float y = Round(x);
-;    unsigned int cmp = y > x ? 0xffffffff : 0;
-;    float delta = -1.f;
-;    unsigned int idelta = intbits(delta);
-;    idelta &= cmp;
-;    delta = floatbits(idelta);
-;    return y + delta;
-;}
-
 define float @__floor_uniform_float(float) nounwind readonly alwaysinline {
   %calltmp.i = tail call float @__round_uniform_float(float %0) nounwind
   %bincmp.i = fcmp ogt float %calltmp.i, %0
@@ -303,18 +291,6 @@ define float @__floor_uniform_float(float) nounwind readonly alwaysinline {
   ret float %binop.i
 }
 
-;; And here is the code we compiled to get the __ceil* functions below
-;
-;export uniform float Ceil(uniform float x) {
-;    uniform float y = Round(x);
-;    uniform int yltx = y < x ? 0xffffffff : 0;
-;    uniform float delta = 1.f;
-;    uniform int idelta = intbits(delta);
-;    idelta &= yltx;
-;    delta = floatbits(idelta);
-;    return y + delta;
-;}
-
 define float @__ceil_uniform_float(float) nounwind readonly alwaysinline {
   %calltmp.i = tail call float @__round_uniform_float(float %0) nounwind
   %bincmp.i = fcmp olt float %calltmp.i, %0
@@ -324,29 +300,6 @@ define float @__ceil_uniform_float(float) nounwind readonly alwaysinline {
   %binop.i = fadd float %calltmp.i, %int_to_float_bitcast.i.i.i
   ret float %binop.i
 }
-
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; rounding
-;;
-;; There are not any rounding instructions in SSE2, so we have to emulate
-;; the functionality with multiple instructions...
-
-; The code for __round_* is the result of compiling the following source
-; code.
-;
-; export float Round(float x) {
-;    unsigned int sign = signbits(x);
-;    unsigned int ix = intbits(x);
-;    ix ^= sign;
-;    x = floatbits(ix);
-;    x += 0x1.0p23f;
-;    x -= 0x1.0p23f;
-;    ix = intbits(x);
-;    ix ^= sign;
-;    x = floatbits(ix);
-;    return x;
-;}
 
 define <4 x float> @__round_varying_float(<4 x float>) nounwind readonly alwaysinline {
   %float_to_int_bitcast.i.i.i.i = bitcast <4 x float> %0 to <4 x i32>
@@ -361,19 +314,6 @@ define <4 x float> @__round_varying_float(<4 x float>) nounwind readonly alwaysi
   ret <4 x float> %int_to_float_bitcast.i.i.i
 }
 
-;; Similarly, for implementations of the __floor* functions below, we have the
-;; bitcode from compiling the following source code...
-
-;export float Floor(float x) {
-;    float y = Round(x);
-;    unsigned int cmp = y > x ? 0xffffffff : 0;
-;    float delta = -1.f;
-;    unsigned int idelta = intbits(delta);
-;    idelta &= cmp;
-;    delta = floatbits(idelta);
-;    return y + delta;
-;}
-
 define <4 x float> @__floor_varying_float(<4 x float>) nounwind readonly alwaysinline {
   %calltmp.i = tail call <4 x float> @__round_varying_float(<4 x float> %0) nounwind
   %bincmp.i = fcmp ogt <4 x float> %calltmp.i, %0
@@ -384,18 +324,6 @@ define <4 x float> @__floor_varying_float(<4 x float>) nounwind readonly alwaysi
   ret <4 x float> %binop.i
 }
 
-;; And here is the code we compiled to get the __ceil* functions below
-;
-;export uniform float Ceil(uniform float x) {
-;    uniform float y = Round(x);
-;    uniform int yltx = y < x ? 0xffffffff : 0;
-;    uniform float delta = 1.f;
-;    uniform int idelta = intbits(delta);
-;    idelta &= yltx;
-;    delta = floatbits(idelta);
-;    return y + delta;
-;}
-
 define <4 x float> @__ceil_varying_float(<4 x float>) nounwind readonly alwaysinline {
   %calltmp.i = tail call <4 x float> @__round_varying_float(<4 x float> %0) nounwind
   %bincmp.i = fcmp olt <4 x float> %calltmp.i, %0
@@ -405,9 +333,6 @@ define <4 x float> @__ceil_varying_float(<4 x float>) nounwind readonly alwaysin
   %binop.i = fadd <4 x float> %calltmp.i, %int_to_float_bitcast.i.i.i
   ret <4 x float> %binop.i
 }
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; rounding doubles
 
 define <4 x double> @__round_varying_double(<4 x double>) nounwind readonly alwaysinline {
   unary1to4(double, @round)
@@ -420,9 +345,6 @@ define <4 x double> @__floor_varying_double(<4 x double>) nounwind readonly alwa
 define <4 x double> @__ceil_varying_double(<4 x double>) nounwind readonly alwaysinline {
   unary1to4(double, @ceil)
 }
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; min/max
 
 define float @__max_uniform_float(float, float) nounwind readnone alwaysinline {
   %cmp = fcmp ugt float %0, %1
@@ -514,11 +436,6 @@ define <4 x float> @__vselect_float(<4 x float>, <4 x float>,
   ret <4 x float> %rf
 }
 
-
-; To do vector integer min and max, we do the vector compare and then sign
-; extend the i1 vector result to an i32 mask.  The __vselect does the
-; rest...
-
 define <4 x i32> @__min_varying_int32(<4 x i32>, <4 x i32>) nounwind readonly alwaysinline {
   %c = icmp slt <4 x i32> %0, %1
   %mask = sext <4 x i1> %c to <4 x i32>
@@ -533,9 +450,6 @@ define <4 x i32> @__max_varying_int32(<4 x i32>, <4 x i32>) nounwind readonly al
   ret <4 x i32> %v
 }
 
-; The functions for unsigned ints are similar, just with unsigned
-; comparison functions...
-
 define <4 x i32> @__min_varying_uint32(<4 x i32>, <4 x i32>) nounwind readonly alwaysinline {
   %c = icmp ult <4 x i32> %0, %1
   %mask = sext <4 x i1> %c to <4 x i32>
@@ -549,7 +463,6 @@ define <4 x i32> @__max_varying_uint32(<4 x i32>, <4 x i32>) nounwind readonly a
   %v = call <4 x i32> @__vselect_i32(<4 x i32> %1, <4 x i32> %0, <4 x i32> %mask)
   ret <4 x i32> %v
 }
-
 
 define <WIDTH x i64> @__min_varying_int64(<WIDTH x i64>, <WIDTH x i64>) nounwind readnone alwaysinline {
   %m = icmp slt <WIDTH x i64> %0, %1
@@ -575,21 +488,18 @@ define <WIDTH x i64> @__max_varying_uint64(<WIDTH x i64>, <WIDTH x i64>) nounwin
   ret <WIDTH x i64> %r
 }
 
-; Function Attrs: nounwind readnone
 define <4 x float> @__max_varying_float(<4 x float> %a, <4 x float> %b) local_unnamed_addr #1 {
 entry:
   %0 = tail call <4 x float> @llvm.maximum.v4f32(<4 x float> %a, <4 x float> %b) #5
   ret <4 x float> %0
 }
 
-; Function Attrs: nounwind readnone
 define <4 x float> @__min_varying_float(<4 x float> %a, <4 x float> %b) local_unnamed_addr #1 {
 entry:
   %0 = tail call <4 x float> @llvm.minimum.v4f32(<4 x float> %a, <4 x float> %b) #5
   ret <4 x float> %0
 }
 
-; Function Attrs: nounwind readnone
 define <4 x double> @__max_varying_double(<4 x double> %a, <4 x double> %b) {
 entry:
   %vecinit2 = shufflevector <4 x double> %a, <4 x double> undef, <2 x i32> <i32 0, i32 1>
@@ -602,7 +512,6 @@ entry:
   ret <4 x double> %vecinit6.i
 }
 
-; Function Attrs: nounwind readnone
 define <4 x double> @__min_varying_double(<4 x double> %a, <4 x double> %b) {
 entry:
   %vecinit2 = shufflevector <4 x double> %a, <4 x double> undef, <2 x i32> <i32 0, i32 1>
@@ -614,25 +523,6 @@ entry:
   %vecinit6.i = shufflevector <2 x double> %0, <2 x double> %1, <4 x i32> <i32 0, i32 1, i32 2, i32 3>
   ret <4 x double> %vecinit6.i
 }
-
-; Function Attrs: nounwind readnone speculatable willreturn
-declare <4 x float> @llvm.maximum.v4f32(<4 x float>, <4 x float>) #4
-
-; Function Attrs: nounwind readnone speculatable willreturn
-declare <4 x float> @llvm.minimum.v4f32(<4 x float>, <4 x float>) #4
-
-; Function Attrs: nounwind readnone speculatable willreturn
-declare <2 x double> @llvm.maximum.v2f64(<2 x double>, <2 x double>) #4
-
-; Function Attrs: nounwind readnone speculatable willreturn
-declare <2 x double> @llvm.minimum.v2f64(<2 x double>, <2 x double>) #4
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; rounding doubles
-
-declare double @round(double)
-declare double @floor(double)
-declare double @ceil(double)
 
 define double @__round_uniform_double(double) nounwind readonly alwaysinline {
   %r = call double @round(double %0)
@@ -681,26 +571,21 @@ define_prefetches()
 popcnt()
 
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; horizontal int8 ops
-
-declare <2 x i64> @llvm.x86.sse2.psad.bw(<16 x i8>, <16 x i8>) nounwind readnone
-
-define i16 @__reduce_add_int8(<4 x i8>) nounwind readnone alwaysinline {
-  %wide8 = shufflevector <4 x i8> %0, <4 x i8> zeroinitializer,
-      <16 x i32> <i32 0, i32 1, i32 2, i32 3, i32 4, i32 4, i32 4, i32 4,
-                  i32 4, i32 4, i32 4, i32 4, i32 4, i32 4, i32 4, i32 4>
-  %rv = call <2 x i64> @llvm.x86.sse2.psad.bw(<16 x i8> %wide8,
-                                              <16 x i8> zeroinitializer)
-  %r0 = extractelement <2 x i64> %rv, i32 0
-  %r1 = extractelement <2 x i64> %rv, i32 1
-  %r = add i64 %r0, %r1
-  %r16 = trunc i64 %r to i16
-  ret i16 %r16
+define i16 @__reduce_add_int8(<4 x i8> %v) {
+entry:
+  %vecext = extractelement <4 x i8> %v, i32 0
+  %conv = sext i8 %vecext to i16
+  %vecext.1 = extractelement <4 x i8> %v, i32 1
+  %conv.1 = sext i8 %vecext.1 to i16
+  %add.1 = add nsw i16 %conv, %conv.1
+  %vecext.2 = extractelement <4 x i8> %v, i32 2
+  %conv.2 = sext i8 %vecext.2 to i16
+  %add.2 = add nsw i16 %add.1, %conv.2
+  %vecext.3 = extractelement <4 x i8> %v, i32 3
+  %conv.3 = sext i8 %vecext.3 to i16
+  %add.3 = add nsw i16 %add.2, %conv.3
+  ret i16 %add.3
 }
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; horizontal int16 ops
 
 define internal <4 x i16> @__add_varying_i16(<4 x i16>,
                                   <4 x i16>) nounwind readnone alwaysinline {
@@ -716,7 +601,6 @@ define internal i16 @__add_uniform_i16(i16, i16) nounwind readnone alwaysinline 
 define i16 @__reduce_add_int16(<4 x i16>) nounwind readnone alwaysinline {
   reduce4(i16, @__add_varying_i16, @__add_uniform_i16)
 }
-
 
 define float @__reduce_add_float(<4 x float> %v) nounwind readonly alwaysinline {
   %v1 = shufflevector <4 x float> %v, <4 x float> undef,
@@ -816,31 +700,42 @@ define  float @__rsqrt_fast_uniform_float(float) nounwind readonly alwaysinline 
   ret float %r
 }
 
+define  double @__rsqrt_uniform_double(double) nounwind readonly alwaysinline {
+  %s = call double @__sqrt_uniform_double(double %0)
+  %r = call double @__rcp_uniform_double(double %s)
+  ret double %r
+}
+
+define  double @__rsqrt_fast_uniform_double(double) nounwind readonly alwaysinline {
+  %s = call double @__sqrt_uniform_double(double %0)
+  %r = call double @__rcp_uniform_double(double %s)
+  ret double %r
+}
+
 define  float @__rcp_uniform_float(float) nounwind readonly alwaysinline {
-;    uniform float iv = extract(__rcp_u(v), 0);
-;    return iv * (2. - v * iv);
   %r = fdiv float 1.,%0
   ret float %r
 }
 
 define  float @__rcp_fast_uniform_float(float) nounwind readonly alwaysinline {
-;    uniform float iv = extract(__rcp_u(v), 0);
-;    return iv;
   %r = fdiv float 1.,%0
   ret float %r
+}
+
+define  double @__rcp_uniform_double(double) nounwind readonly alwaysinline {
+  %r = fdiv double 1.,%0
+  ret double %r
+}
+
+define  double @__rcp_fast_uniform_double(double) nounwind readonly alwaysinline {
+  %r = fdiv double 1.,%0
+  ret double %r
 }
 
 define <4 x double> @__rcp_varying_double(<4 x double> %x) {
 entry:
   %0 = fdiv <4 x double> <double 1.000000e+00, double 1.000000e+00, double 1.000000e+00, double 1.000000e+00>, %x
   ret <4 x double> %0
-}
-
-; Function Attrs: norecurse nounwind readnone
-define double @__rcp_uniform_double(double %v) {
-entry:
-  %div = fdiv double 1.000000e+00, %v
-  ret double %div
 }
 
 define i64 @__reduce_add_int64(<4 x i64>) nounwind readnone alwaysinline {
