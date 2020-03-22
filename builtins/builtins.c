@@ -52,7 +52,6 @@
 
 #ifndef WASM
 
-#ifndef WASM_IMPLEMENTATION
 #ifdef _MSC_VER
 // We do want old school sprintf and don't want secure Microsoft extensions.
 // And we also don't want warnings about it, so the define.
@@ -74,18 +73,7 @@
 // #define _SC_NPROCESSORS_ONLN 58
 // long sysconf(int);
 #endif // !_MSC_VER
-
-#else
-#define __do_print __wasm_do_print
-#include <stdint.h>
-#include <time.h>
-int64_t __wasm_clock() {
-    // clockid_t clocks[] = { CLOCK_REALTIME, CLOCK_MONOTONIC };
-    // struct timespec ts;
-    // clock_gettime(clocks[1], &ts);
-    return clock();
-}
-#endif // !WASM_IMPLEMENTATION
+#endif // WASM
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -217,7 +205,9 @@ done:
     fflush(stdout);
 }
 
-#ifndef WASM_IMPLEMENTATION
+#ifdef WASM
+int __num_cores() { return 1; }
+#else // WASM
 int __num_cores() {
 #if defined(_MSC_VER) || defined(__MINGW32__)
     // This is quite a hack.  Including all of windows.h to get this definition
@@ -241,14 +231,4 @@ int __num_cores() {
     return sysconf(_SC_NPROCESSORS_ONLN);
 #endif // !_MSC_VER
 }
-
-#endif // !WASM_IMPLEMENTATION
-#else // WASM
-#include <stdint.h>
-int __num_cores() { return 1; }
-// Use proxy function for wasm implementation because of linkage differencies
-void __wasm_do_print(const char *format, const char *types, int width, uint64_t mask, void **args);
-void __do_print(const char *format, const char *types, int width, uint64_t mask, void **args) {
-    __wasm_do_print(format, types, width, mask, args);
-}
-#endif
+#endif // !WASM

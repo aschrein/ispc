@@ -116,7 +116,6 @@ svml_stubs(double,d,WIDTH)
 define_avgs()
 saturation_arithmetic()
 
-declare i64 @__wasm_clock()
 declare <4 x double> @llvm.sqrt.v4f64(<4 x double>)
 declare float @__half_to_float_uniform(i16 %v) nounwind readnone
 declare <WIDTH x float> @__half_to_float_varying(<WIDTH x i16> %v) nounwind readnone
@@ -148,10 +147,14 @@ define i1 @__wasm_cmp_msk_eq(<4 x i32> %v1, <4 x i32> %v2) nounwind readnone alw
   ret i1 %ret
 }
 
-define i64 @__clock() nounwind {
-  %r = call i64 @__wasm_clock()
-  ret i64 %r
+define i64 @__clock() {
+entry:
+  %call = tail call i32 @clock()
+  %conv = sext i32 %call to i64
+  ret i64 %conv
 }
+
+declare i32 @clock()
 
 define void @__fastmath() {
 entry:
@@ -218,11 +221,6 @@ define i64 @__movmsk(<WIDTH x MASK> %mask) nounwind readnone alwaysinline {
   %res = bitcast <WIDTH x i1> %mask1 to i4
   %res_i64 = zext i4 %res to i64
   ret i64 %res_i64
-}
-
-define i128 @__movmsk128(<WIDTH x MASK> %mask) nounwind readnone alwaysinline {
-  %mask_128 = bitcast <WIDTH x MASK> %mask to i128
-  ret i128 %mask_128
 }
 
 define i1 @__any(<4 x MASK> %mask) nounwind readnone alwaysinline {
