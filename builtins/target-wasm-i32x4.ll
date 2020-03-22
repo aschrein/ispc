@@ -48,7 +48,7 @@ define(`HAS_CUSTOM_CLOCK',`1')
 ;; It's unable to recognize movmsk patterns which results in poor codegen
 ;; To mitigate that here is an overloading that does i128 comparisons
 ;; that avoids expensive 'trunc <4 x i32> to <4 x i1>' instructions
-define(`ENABLE_CUSTOM_PER_LANE', `1')
+define(`ENABLE_CUSTOM_PER_LANE', `0')
 ifelse(ENABLE_CUSTOM_PER_LANE, `1', `
 define(`HAS_CUSTOM_PER_LANE',`1')
 
@@ -140,6 +140,13 @@ declare <2 x double> @llvm.minimum.v2f64(<2 x double>, <2 x double>)
 declare double @round(double)
 declare double @floor(double)
 declare double @ceil(double)
+
+define i1 @__wasm_cmp_msk_eq(<4 x i32> %v1, <4 x i32> %v2) nounwind readnone alwaysinline {
+  %v1_i128 = bitcast <4 x i32> %v1 to i128
+  %v2_i128 = bitcast <4 x i32> %v2 to i128
+  %ret = icmp eq i128 %v1_i128, %v2_i128
+  ret i1 %ret
+}
 
 define i64 @__clock() nounwind {
   %r = call i64 @__wasm_clock()
